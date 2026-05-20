@@ -1,0 +1,5 @@
+deepgram-sdk==3.7.0
+groq==0.9.0
+python-dotenv==1.0.1
+pydantic==2.7.1
+pandas==2.2.2
