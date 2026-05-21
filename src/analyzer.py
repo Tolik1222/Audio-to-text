@@ -80,13 +80,13 @@ class CallAnalyzer:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Текст розмови для аналізу:\n{transcript}"}
                 ],
-                model="llama-3.3-70b-versatile",  # best model for ukrainian text analysis
+                model="llama-3.3-70b-versatile",
                 response_format={"type": "json_object"},
-                temperature=0.1,  # low temp for consistent structure
+                temperature=0.1,
                 max_tokens=2048
             )
 
-            # parse the returned json
+            # parse
             raw_json = chat_completion.choices[0].message.content
             ai_data = json.loads(raw_json)
             
@@ -94,7 +94,7 @@ class CallAnalyzer:
             if "properties" in ai_data and isinstance(ai_data["properties"], dict):
                 ai_data = ai_data["properties"]
             
-            # calculate extra fields and prepare data for the sheet
+            # calculate extra fields, prepare data for the sheet
             score = (
                 ai_data.get("has_introduction", 0) +
                 ai_data.get("asked_car_body", 0) +

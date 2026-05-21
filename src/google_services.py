@@ -21,9 +21,9 @@ class GoogleServicesManager:
         self.creds = Credentials.from_service_account_file(credentials_path, scopes=scopes)
         self.drive = build('drive', 'v3', credentials=self.creds)
         self.sheets = build('sheets', 'v4', credentials=self.creds)
-        logging.info('✅ Google services initialised')
+        logging.info('Google services initialised')
 
-    # ---------- Drive helpers ----------
+    # Drive helper
     def list_audio_files(self, folder_id: str) -> List[Dict[str, str]]:
         """Return list of dicts {'id': ..., 'name': ...} for .mp3 files in folder_id."""
         query = f"'{folder_id}' in parents and mimeType='audio/mpeg' and trashed=false"
@@ -37,7 +37,7 @@ class GoogleServicesManager:
         done = False
         while not done:
             status, done = downloader.next_chunk()
-        logging.info(f"📥 Downloaded {dest_path} (id={file_id})")
+        logging.info(f"Downloaded {dest_path} (id={file_id})")
 
     def upload_file(self, local_path: str, folder_id: str) -> str:
         """Upload a local file to target Drive folder and return the new file ID."""
@@ -45,7 +45,7 @@ class GoogleServicesManager:
         media = MediaFileUpload(local_path, resumable=True)
         body = {"name": file_name, "parents": [folder_id]}
         file = self.drive.files().create(body=body, media_body=media, fields='id').execute()
-        logging.info(f"📤 Uploaded {file_name} to Drive (id={file.get('id')})")
+        logging.info(f"Uploaded {file_name} to Drive (id={file.get('id')})")
         return file.get('id')
 
     def move_file(self, file_id: str, new_folder_id: str) -> None:
@@ -61,9 +61,9 @@ class GoogleServicesManager:
             removeParents=previous_parents,
             fields='id, parents'
         ).execute()
-        logging.info(f"🚚 Moved file {file_id} to folder {new_folder_id}")
+        logging.info(f"Moved file {file_id} to folder {new_folder_id}")
 
-    # ---------- Sheet helpers ----------
+    # Sheet helpers
     def create_sheet(self, title: str, folder_id: str = None) -> str:
         """Create a new blank Google Sheet and return its ID."""
         body = {
@@ -75,7 +75,7 @@ class GoogleServicesManager:
             
         sheet = self.drive.files().create(body=body, fields='id').execute()
         sheet_id = sheet.get('id')
-        logging.info(f"📄 Created new sheet '{title}' with id {sheet_id}")
+        logging.info(f"Created new sheet '{title}' with id {sheet_id}")
         return sheet_id
 
     def copy_sheet_template(self, template_id: str, new_name: str) -> str:
@@ -83,7 +83,7 @@ class GoogleServicesManager:
         body = {"name": new_name}
         copied = self.drive.files().copy(fileId=template_id, body=body).execute()
         new_id = copied['id']
-        logging.info(f"📄 Created sheet copy '{new_name}' with id {new_id}")
+        logging.info(f"Created sheet copy '{new_name}' with id {new_id}")
         return new_id
 
     def find_sheet_by_name(self, name: str, folder_id: str = None) -> str:
@@ -95,7 +95,7 @@ class GoogleServicesManager:
         result = self.drive.files().list(q=query, fields='files(id,name)').execute()
         files = result.get('files', [])
         if files:
-            logging.info(f"🔍 Found existing sheet '{name}' (id={files[0]['id']})")
+            logging.info(f"Found existing sheet '{name}' (id={files[0]['id']})")
             return files[0]['id']
         return None
 
@@ -123,7 +123,7 @@ class GoogleServicesManager:
             spreadsheetId=sheet_id, 
             body={"requests": requests}
         ).execute()
-        logging.info(f"📝 Added headers to sheet {sheet_id}")
+        logging.info(f"Added headers to sheet {sheet_id}")
 
     def append_row(self, sheet_id: str, values: List[str]) -> str:
         """Append a row of values to the sheet and return the updated range."""
@@ -141,7 +141,7 @@ class GoogleServicesManager:
             .execute()
         )
         updated_range = result.get('updates', {}).get('updatedRange')
-        logging.info(f"🧩 Appended row to sheet {sheet_id} (range {updated_range})")
+        logging.info(f"Appended row to sheet {sheet_id} (range {updated_range})")
         return updated_range
 
     def apply_red_formatting(self, sheet_id: str, row_index: int, col_index: int) -> None:
@@ -164,4 +164,4 @@ class GoogleServicesManager:
             }
         }]
         self.sheets.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body={"requests": requests}).execute()
-        logging.info(f"🔴 Applied red formatting to sheet {sheet_id} cell ({row_index+1}, {col_index+1})")
+        logging.info(f"Applied red formatting to sheet {sheet_id} cell ({row_index+1}, {col_index+1})")

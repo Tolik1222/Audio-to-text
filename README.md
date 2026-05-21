@@ -50,3 +50,58 @@ call-analyzer-bot/
    ```
 
 5. Скрипт знайде необроблені `.mp3` файли у вхідній папці на Google Drive, транскрибує їх, проаналізує, перемістить аудіофайли до робочої папки та додасть результати у вказану Google Таблицю.
+
+
+########################################## English #########################################
+
+
+
+# Call Analyzer Bot
+
+An automated tool to transcribe and analyze customer calls for service centers. It fetches audio recordings from Google Drive, transcribes them locally using Whisper, analyzes the conversation quality using the Groq LLM API, and logs the structured results into a Google Sheet.
+
+## Project Structure
+
+```
+call-analyzer-bot/
+│
+├── data/
+│   ├── temp_downloads/        # Temp folder for downloaded audio and text files
+│
+├── src/
+│   ├── __init__.py
+│   ├── transcriber.py         # Local audio transcription via Whisper
+│   ├── analyzer.py            # AI conversation analysis via Groq
+│   ├── csv_manager.py         # Local CSV management (if needed)
+│   └── google_services.py     # Google Drive & Sheets integration utilities
+│
+├── .env                       # Environment variables (API keys, folder IDs)
+├── .env.example               # Example env template
+├── credentials.json           # Google Service Account credentials (required)
+├── main.py                    # Main pipeline script
+├── README.md                  # Project documentation
+└── requirements.txt           # Python dependencies
+```
+
+## Setup & Execution
+
+1. Create a `.env` file based on `.env.example` and set your variables:
+   ```env
+   GROQ_API_KEY=your_groq_api_key_here
+   DEEPGRAM_API_KEY=your_deepgram_api_key_here
+   
+   SOURCE_DRIVE_FOLDER=your_source_folder_id
+   WORKING_DRIVE_FOLDER=your_working_folder_id
+   TARGET_SHEET_NAME=Transcription_Report
+   ```
+2. Place your `credentials.json` for the Google Service Account in the root directory.
+
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Run the script:
+   ```bash
+   python main.py
+   ```
+5. The script will fetch unhandled `.mp3` files from the source Drive folder, transcribe them, analyze them, move the audio to the working folder, and append the results to the specified Google Sheet.

@@ -5,12 +5,11 @@ import time
 import re
 from dotenv import load_dotenv
 
-# import our local modules
 from src.transcriber import AudioTranscriber
 from src.analyzer import CallAnalyzer
 from src.google_services import GoogleServicesManager
 
-# set up basic logging format
+# basic logging format
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
 
 def parse_phone_from_filename(filename: str) -> str:
@@ -18,7 +17,7 @@ def parse_phone_from_filename(filename: str) -> str:
     basename = os.path.basename(filename)
     name_without_ext = os.path.splitext(basename)[0]
     
-    # try splitting by underscore (expected format: YYYY-MM-DD_HH-MM_PHONE_direction)
+    # try splitting by underscore
     parts = name_without_ext.split('_')
     if len(parts) >= 3:
         possible_phone = parts[2]
@@ -26,7 +25,7 @@ def parse_phone_from_filename(filename: str) -> str:
         if len(clean_digits) >= 9:
             return clean_digits
             
-    # fallback: just grab all digits if the format doesn't match
+    # grab all digits if the format doesn't match
     clean_digits = ''.join(c for c in name_without_ext if c.isdigit())
     return clean_digits if len(clean_digits) >= 9 else "Невідомий номер"
 
@@ -52,7 +51,7 @@ def main():
         logging.error("Будь ласка, перевірте файли конфігурації .env! Відсутні необхідні ключі API або ID папок.")
         return
 
-    logging.info("🚀 Ініціалізація сервісів аналізу дзвінків...")
+    logging.info("Ініціалізація сервісів аналізу дзвінків...")
     transcriber = AudioTranscriber(model_name="turbo")
     analyzer = CallAnalyzer(api_key=groq_key)
     
@@ -77,18 +76,18 @@ def main():
     ]
     
     if not sheet_id:
-        logging.error(f"❌ Таблицю '{target_sheet_name}' не знайдено у вашій робочій папці.")
-        logging.error("👉 Будь ласка, створіть ВРУЧНУ нову Google Таблицю (Google Sheets) з назвою:")
+        logging.error(f"Таблицю '{target_sheet_name}' не знайдено у вашій робочій папці.")
+        logging.error("Будь ласка, створіть ВРУЧНУ нову Google Таблицю (Google Sheets) з назвою:")
         logging.error(f"   {target_sheet_name}")
         logging.error("у папці, до якої має доступ сервісний акаунт, і запустіть скрипт знову.")
         logging.error("Першим рядком у цій таблиці бажано вставити ці заголовки:")
         logging.error(" | ".join(headers))
         return
     else:
-        logging.info(f"✅ Використовуємо існуючу таблицю: {target_sheet_name}")
+        logging.info(f"Використовуємо існуючу таблицю: {target_sheet_name}")
 
     # look for all .mp3 files in the source drive folder
-    logging.info(f"🔎 Пошук аудіофайлів у папці {source_folder_id}...")
+    logging.info(f"Пошук аудіофайлів у папці {source_folder_id}...")
     audio_files = google_services.list_audio_files(source_folder_id)
     
     if not audio_files:
@@ -106,19 +105,19 @@ def main():
         file_name = drive_file['name']
         
         logging.info(f"--------------------------------------------------")
-        logging.info(f"🎬 Початок обробки файлу: {file_name}")
+        logging.info(f"Початок обробки файлу: {file_name}")
         
         local_audio_path = os.path.join(temp_dir, file_name)
         
         # 1. download audio
-        logging.info("📥 Завантаження файлу з Google Drive...")
+        logging.info("Завантаження файлу з Google Drive...")
         google_services.download_file(file_id, local_audio_path)
         
         # 2. extract phone number
         phone_number = parse_phone_from_filename(local_audio_path)
         
         # 3. run transcription
-        logging.info("⏳ Запуск транскрибації через локальний Whisper (turbo)...")
+        logging.info("Запуск транскрибації через локальний Whisper (turbo)...")
         transcript = transcriber.transcribe(local_audio_path)
         
         if not transcript:
@@ -126,20 +125,20 @@ def main():
             time.sleep(2)
             continue
             
-        logging.info("✅ Транскрибація успішно завершена!")
+        logging.info("Транскрибація успішно завершена!")
  
-        # 4. save transcript locally (skipping drive upload due to quota limits)
+        # 4. save transcript locally
         txt_name = os.path.splitext(file_name)[0] + ".txt"
         txt_path = os.path.join(temp_dir, txt_name)
         with open(txt_path, "w", encoding="utf-8") as txt_file:
             txt_file.write(transcript)
         
         # 5. move the audio file to the working drive folder
-        logging.info("🚚 Переміщення аудіофайлу в робочу папку...")
+        logging.info("Переміщення аудіофайлу в робочу папку...")
         google_services.move_file(file_id, working_folder_id)
  
-        # 6. run AI analysis
-        logging.info("⏳ ШІ аналізує розмову та заповнює чек-лист якості через Groq...")
+        # 6. run AI
+        logging.info("ШІ аналізує розмову та заповнює чек-лист якості через Groq...")
         analysis_result = analyzer.analyze_transcript(transcript, phone_number=phone_number)
         
         if not analysis_result:
@@ -148,7 +147,7 @@ def main():
             continue
  
         # 7. write the new row to google sheets
-        logging.info("⏳ Запис результатів аналізу в Google Sheets...")
+        logging.info("Запис результатів аналізу в Google Sheets...")
         
         # prepare row values in the correct order to match headers
         row_values = [str(analysis_result.get(key, "")) for key in headers]
@@ -156,17 +155,17 @@ def main():
         updated_range = google_services.append_row(sheet_id, row_values)
         row_index = parse_row_index(updated_range)
         
-        # check for critical issues to highlight
+        # check for critical issues
         comment = analysis_result.get("Коментар", "")
         if "[КРИТИЧНО / НЕ ОК]" in comment and row_index != -1:
-            logging.info("🔴 Виявлено проблемний дзвінок! Фарбуємо клітинку коментаря в червоний...")
+            logging.info("Виявлено проблемний дзвінок! Фарбуємо клітинку коментаря в червоний...")
             # comment column is the last one
             comment_col_index = len(headers) - 1
             google_services.apply_red_formatting(sheet_id, row_index, comment_col_index)
             
-        logging.info(f"🎉 Файл {file_name} успішно оброблено та занесено в звіт!")
+        logging.info(f"Файл {file_name} успішно оброблено та занесено в звіт!")
         
-        # clean up temp files
+        # clean up temp
         if os.path.exists(local_audio_path):
             os.remove(local_audio_path)
         if os.path.exists(txt_path):
@@ -176,7 +175,7 @@ def main():
         time.sleep(2)
  
     logging.info("==================================================")
-    logging.info("🏁 Обробку всіх файлів завершено успішно!")
+    logging.info("Обробку всіх файлів завершено успішно!")
 
 if __name__ == "__main__":
     main()
