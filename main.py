@@ -2,22 +2,23 @@ import os
 import glob
 import logging
 import time
+import re
 from dotenv import load_dotenv
 
-# Імпортуємо наші локальні модулі
-# from src.transcriber import AudioTranscriber
+# import our local modules
+from src.transcriber import AudioTranscriber
 from src.analyzer import CallAnalyzer
-from src.csv_manager import CSVManager
+from src.google_services import GoogleServicesManager
 
-# Налаштування красивого логування в консоль (вимога софт-скілів та чистого коду)
+# set up basic logging format
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
 
 def parse_phone_from_filename(filename: str) -> str:
-    """Допоміжна функція для отримання номера телефону з назви файлу"""
+    """helper function to extract phone number from the filename"""
     basename = os.path.basename(filename)
     name_without_ext = os.path.splitext(basename)[0]
     
-    # Спробуємо розділити за символом підкреслення (формат: YYYY-MM-DD_HH-MM_PHONE_direction)
+    # try splitting by underscore (expected format: YYYY-MM-DD_HH-MM_PHONE_direction)
     parts = name_without_ext.split('_')
     if len(parts) >= 3:
         possible_phone = parts[2]
@@ -25,80 +26,153 @@ def parse_phone_from_filename(filename: str) -> str:
         if len(clean_digits) >= 9:
             return clean_digits
             
-    # Якщо формат інший, шукаємо всі цифри як запасний варіант
+    # fallback: just grab all digits if the format doesn't match
     clean_digits = ''.join(c for c in name_without_ext if c.isdigit())
     return clean_digits if len(clean_digits) >= 9 else "Невідомий номер"
+
+def parse_row_index(updated_range: str) -> int:
+    """parses 0-based row index from a google sheets range (e.g. Sheet1!A5:Z5 -> 4)"""
+    if not updated_range:
+        return -1
+    match = re.search(r'[A-Z]+(\d+)', updated_range)
+    if match:
+        return int(match.group(1)) - 1
+    return -1
 
 def main():
     load_dotenv()
     
-    # Ініціалізація ключів
-    # deepgram_key = os.getenv("DEEPGRAM_API_KEY")
+    # init keys
     groq_key = os.getenv("GROQ_API_KEY")
-    csv_path = os.path.join("data", "Лист1.csv")
-    text_dir = os.path.join("data", "incoming_calls")
+    source_folder_id = os.getenv("SOURCE_DRIVE_FOLDER")
+    working_folder_id = os.getenv("WORKING_DRIVE_FOLDER")
+    target_sheet_name = os.getenv("TARGET_SHEET_NAME", "Звіт транскрибацій")
     
-    if not groq_key:
-        logging.error("Будь ласка, перевірте файли конфігурації .env! Ключі API відсутні.")
+    if not groq_key or not source_folder_id or not working_folder_id:
+        logging.error("Будь ласка, перевірте файли конфігурації .env! Відсутні необхідні ключі API або ID папок.")
         return
 
     logging.info("🚀 Ініціалізація сервісів аналізу дзвінків...")
-    # transcriber = AudioTranscriber(api_key=deepgram_key)
+    transcriber = AudioTranscriber(model_name="turbo")
     analyzer = CallAnalyzer(api_key=groq_key)
-    csv_manager = CSVManager(csv_path=csv_path)
-
-    # Шукаємо всі .txt файли в папці
-    text_files = glob.glob(os.path.join(text_dir, "*.txt"))
     
-    if not text_files:
-        logging.warning(f"У папці {text_dir} не знайдено жодного .txt файлу для обробки.")
+    try:
+        google_services = GoogleServicesManager("credentials.json")
+    except Exception as e:
+        logging.error(f"Помилка підключення до Google Services: {e}")
+        logging.error("Переконайтесь, що файл credentials.json знаходиться в корені проекту.")
         return
 
-    logging.info(f"Знайдено файлів для обробки: {len(text_files)}")
+    # set up the target sheet (find it or create a new one)
+    sheet_id = google_services.find_sheet_by_name(target_sheet_name, working_folder_id)
+    headers = [
+        "Дата", "Тип звернення", "Номер телефону", "Філія", "Менеджер",
+        "Початок розмови, представлення", "Чи дізнвся менеджер кузов атвомобіля",
+        "Чи дізнався менеджер рік автомобіля", "Чи дізнався менеджр пробіг",
+        "Пропозиція про комплексну діагностику", "Дізнався які роботи робилися раніше",
+        "Запис на сервіс, Дата", "Завершення розмови прощання", "Яка робота з топ 100 ",
+        "Чи дотримувався всіх інструкцій з топ 100 робіт Да/Ні",
+        "Яких рекоменадцій менеджер не дотримувався з топ 100 робіт",
+        "Результат", "Оцінка ", "Запчастини", "Коментар"
+    ]
+    
+    if not sheet_id:
+        logging.error(f"❌ Таблицю '{target_sheet_name}' не знайдено у вашій робочій папці.")
+        logging.error("👉 Будь ласка, створіть ВРУЧНУ нову Google Таблицю (Google Sheets) з назвою:")
+        logging.error(f"   {target_sheet_name}")
+        logging.error("у папці, до якої має доступ сервісний акаунт, і запустіть скрипт знову.")
+        logging.error("Першим рядком у цій таблиці бажано вставити ці заголовки:")
+        logging.error(" | ".join(headers))
+        return
+    else:
+        logging.info(f"✅ Використовуємо існуючу таблицю: {target_sheet_name}")
 
-    for txt_path in text_files:
+    # look for all .mp3 files in the source drive folder
+    logging.info(f"🔎 Пошук аудіофайлів у папці {source_folder_id}...")
+    audio_files = google_services.list_audio_files(source_folder_id)
+    
+    if not audio_files:
+        logging.warning("У вхідній папці Drive не знайдено жодного аудіофайлу для обробки.")
+        return
+
+    logging.info(f"Знайдено файлів для обробки: {len(audio_files)}")
+
+    # create a temp dir for local downloads
+    temp_dir = os.path.join("data", "temp_downloads")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    for drive_file in audio_files:
+        file_id = drive_file['id']
+        file_name = drive_file['name']
+        
         logging.info(f"--------------------------------------------------")
-        logging.info(f"🎬 Початок обробки файлу: {os.path.basename(txt_path)}")
+        logging.info(f"🎬 Початок обробки файлу: {file_name}")
         
-        # 1. Витягуємо номер телефону
-        phone_number = parse_phone_from_filename(txt_path)
+        local_audio_path = os.path.join(temp_dir, file_name)
         
-        # 2. Читання тексту транскрибації
-        logging.info("⏳ Читання тексту транскрибації...")
-        try:
-            with open(txt_path, "r", encoding="utf-8-sig") as txt_file:
-                transcript = txt_file.read()
-        except Exception as e:
-            try:
-                # Fallback to utf-8 if utf-8-sig fails, though utf-8-sig should handle both.
-                with open(txt_path, "r", encoding="utf-8") as txt_file:
-                    transcript = txt_file.read()
-            except Exception as e:
-                logging.error(f"Помилка читання файлу {txt_path}: {e}")
-                continue
+        # 1. download audio
+        logging.info("📥 Завантаження файлу з Google Drive...")
+        google_services.download_file(file_id, local_audio_path)
         
-        if not transcript.strip():
-            logging.warning(f"У файлі {txt_path} не виявлено тексту. Пропускаємо.")
+        # 2. extract phone number
+        phone_number = parse_phone_from_filename(local_audio_path)
+        
+        # 3. run transcription
+        logging.info("⏳ Запуск транскрибації через локальний Whisper (turbo)...")
+        transcript = transcriber.transcribe(local_audio_path)
+        
+        if not transcript:
+            logging.warning(f"У файлі {file_name} не виявлено розбірливого мовлення. Пропускаємо.")
             time.sleep(2)
             continue
             
-        logging.info("✅ Текст успішно завантажено!")
+        logging.info("✅ Транскрибація успішно завершена!")
  
-        # 4. Аналіз ШІ (Groq Llama 3)
+        # 4. save transcript locally (skipping drive upload due to quota limits)
+        txt_name = os.path.splitext(file_name)[0] + ".txt"
+        txt_path = os.path.join(temp_dir, txt_name)
+        with open(txt_path, "w", encoding="utf-8") as txt_file:
+            txt_file.write(transcript)
+        
+        # 5. move the audio file to the working drive folder
+        logging.info("🚚 Переміщення аудіофайлу в робочу папку...")
+        google_services.move_file(file_id, working_folder_id)
+ 
+        # 6. run AI analysis
         logging.info("⏳ ШІ аналізує розмову та заповнює чек-лист якості через Groq...")
         analysis_result = analyzer.analyze_transcript(transcript, phone_number=phone_number)
         
         if not analysis_result:
-            logging.error(f"Помилка аналізу ШІ для файлу {txt_path}. Пропускаємо.")
+            logging.error(f"Помилка аналізу ШІ для файлу {file_name}. Пропускаємо.")
             time.sleep(2)
             continue
  
-        # 5. Запис рядка в локальну таблицю CSV
-        logging.info("⏳ Запис результатів аналізу в Лист1.csv...")
-        csv_manager.append_row(analysis_result)
-        logging.info(f"🎉 Файл {os.path.basename(txt_path)} успішно оброблено та занесено в звіт!")
+        # 7. write the new row to google sheets
+        logging.info("⏳ Запис результатів аналізу в Google Sheets...")
         
-        # Затримка для запобігання Rate Limits 429
+        # prepare row values in the correct order to match headers
+        row_values = [str(analysis_result.get(key, "")) for key in headers]
+        
+        updated_range = google_services.append_row(sheet_id, row_values)
+        row_index = parse_row_index(updated_range)
+        
+        # check for critical issues to highlight
+        comment = analysis_result.get("Коментар", "")
+        if "[КРИТИЧНО / НЕ ОК]" in comment and row_index != -1:
+            logging.info("🔴 Виявлено проблемний дзвінок! Фарбуємо клітинку коментаря в червоний...")
+            # comment column is the last one
+            comment_col_index = len(headers) - 1
+            google_services.apply_red_formatting(sheet_id, row_index, comment_col_index)
+            
+        logging.info(f"🎉 Файл {file_name} успішно оброблено та занесено в звіт!")
+        
+        # clean up temp files
+        if os.path.exists(local_audio_path):
+            os.remove(local_audio_path)
+        if os.path.exists(txt_path):
+            os.remove(txt_path)
+            
+        # small delay to prevent hitting API rate limits
         time.sleep(2)
  
     logging.info("==================================================")

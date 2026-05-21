@@ -4,13 +4,13 @@ import logging
 from groq import Groq
 from pydantic import BaseModel, Field
 
-# 1. Описуємо структуру відповіді, яку ШІ ЗОБОВ'ЯЗАНИЙ повернути
+# 1. define the response structure for the AI
 class CallAnalysisSchema(BaseModel):
     type_of_call: str = Field(description="Тип звернення: наприклад, 'Вхідний', 'Вихідний', 'Авто в роботі' або 'Консультація'")
     manager_name: str = Field(description="Ім'я менеджера, якщо прозвучало в привітанні. Інакше 'Не вказано'")
     branch: str = Field(description="Філія/місто (наприклад, 'Петровка', 'Голосіївська', 'Лівий Берег'), якщо згадувалось")
     
-    # Скрипт (оцінки 1 або 0)
+    # script checklist (1 or 0)
     has_introduction: int = Field(description="1 якщо менеджер привітався і представився на початку розмови, інакше 0")
     asked_car_body: int = Field(description="1 якщо менеджер дізнався або уточнив кузов чи марку автомобіля (наприклад: седан, універсал, F10), інакше 0")
     asked_car_year: int = Field(description="1 якщо менеджер дізнався або уточнив конкретний рік випуску автомобіля (наприклад, 2012). Якщо рік не згадувався або була названа лише модель/кузов (наприклад, F10) без року випуску, став 0")
@@ -25,14 +25,14 @@ class CallAnalysisSchema(BaseModel):
     result: str = Field(description="Короткий результат розмови (наприклад: Записався на середу, Думає, Дорого, Передзвонити)")
     parts_discussed: str = Field(description="Які запчастини обговорювали (наші, клієнта, ціна, наявність)")
     
-    # Критерії "Червоного прапорця" (Якщо дзвінок не ОК)
+    # red flag criteria
     is_manager_ok: bool = Field(description="False, якщо менеджер грубіянив, перебивав, відповідав некоректно, не надав інформацію. True, якщо розмова пройшла адекватно.")
     comment: str = Field(description="Детальний коментар аналізу розмови.")
 
 class CallAnalyzer:
     def __init__(self, api_key: str):
         self.client = Groq(api_key=api_key)
-        # Список робіт з ТОП-100 для промпту
+        # top 100 works list for the prompt
         self.top_works = [
             "Заміна патрубка ОР", "Заміна приводного ремня", "Діагностика ДВЗ", 
             "Зняття / встановлення кардану", "Заміна прокладки картера (піддону)", 
@@ -42,11 +42,11 @@ class CallAnalyzer:
         ]
 
     def analyze_transcript(self, transcript: str, phone_number: str = "") -> dict:
-        """Передає текст розмови в Groq, аналізує її та повертає фінальний словник для CSV"""
+        """sends the transcript to groq, analyzes it, and returns a dict for the csv"""
         if not transcript:
             return {}
 
-        # Створюємо зручний опис полів для промпту, щоб уникнути вкладеності "properties"
+        # build a flat description of fields to avoid nested 'properties' in the prompt
         schema_dict = CallAnalysisSchema.model_json_schema()
         fields_desc = ""
         for field_name, field_info in schema_dict.get("properties", {}).items():
@@ -74,27 +74,27 @@ class CallAnalyzer:
         """
 
         try:
-            # Викликаємо Groq API з підтримкою JSON Schema та лімітом токенів
+            # call groq api with json schema support
             chat_completion = self.client.chat.completions.create(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Текст розмови для аналізу:\n{transcript}"}
                 ],
-                model="llama-3.3-70b-versatile",  # Найпотужніша модель для ідеального аналізу української мови та форматів
+                model="llama-3.3-70b-versatile",  # best model for ukrainian text analysis
                 response_format={"type": "json_object"},
-                temperature=0.1,  # Низька температура для стабільності структури
+                temperature=0.1,  # low temp for consistent structure
                 max_tokens=2048
             )
 
-            # Парсимо отриманий JSON
+            # parse the returned json
             raw_json = chat_completion.choices[0].message.content
             ai_data = json.loads(raw_json)
             
-            # Захист від вкладеності "properties" (якщо модель все ж згенерувала структуру схеми буквально)
+            # guard against nested 'properties' just in case
             if "properties" in ai_data and isinstance(ai_data["properties"], dict):
                 ai_data = ai_data["properties"]
             
-            # Розрахунок додаткових полів та фінальна збірка під формат нашої таблиці Лист1
+            # calculate extra fields and prepare data for the sheet
             score = (
                 ai_data.get("has_introduction", 0) +
                 ai_data.get("asked_car_body", 0) +
@@ -107,7 +107,7 @@ class CallAnalyzer:
             
             followed_all = "Да" if score == 7 else "Ні"
             
-            # Формуємо список невиконаних рекомендацій українською мовою
+            # build a list of missed recommendations
             missed = []
             if not ai_data.get("has_introduction", 0):
                 missed.append("привітання/представлення")
@@ -126,12 +126,12 @@ class CallAnalyzer:
             
             missed_str = ", ".join(missed) if missed else "дотримано всіх вимог"
             
-            # Обробка коментаря (виділення НЕ ОК дзвінків, як просить ТЗ)
+            # process the comment and highlight bad calls
             final_comment = ai_data.get("comment", "")
             if not ai_data.get("is_manager_ok", True):
                 final_comment = f"[КРИТИЧНО / НЕ ОК] {final_comment}"
 
-            # Формуємо словник суворо під колонки нашого Лист1.csv
+            # format the final dict to exactly match our sheet columns
             import datetime
             current_date = datetime.date.today().strftime("%Y-%m-%d")
 
@@ -153,7 +153,7 @@ class CallAnalyzer:
                 "Чи дотримувався всіх інструкцій з топ 100 робіт Да/Ні": followed_all,
                 "Яких рекоменадцій менеджер не дотримувався з топ 100 робіт": missed_str,
                 "Результат": ai_data.get("result", ""),
-                "Оцінка ": score,  # Наш останній стовпчик з сумою балів 1 або 0
+                "Оцінка ": score,  # the score sum column
                 "Запчастини": ai_data.get("parts_discussed", ""),
                 "Коментар": final_comment
             }
